@@ -1,0 +1,7 @@
+ultralytics 
+easyocr
+opencv-python 
+pillow 
+paho-mqtt 
+torch
+flask
