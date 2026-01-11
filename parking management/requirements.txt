@@ -1,0 +1,4 @@
+opencv-python
+ultralytics
+Pillow
+yt-dlp

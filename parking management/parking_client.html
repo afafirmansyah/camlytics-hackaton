@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parking Detection System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen p-4">
+    <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-lg p-6">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">
+            🚗 Parking Detection System - Location 1
+        </h1>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Upload Section -->
+            <div class="bg-gray-50 p-4 rounded-lg border">
+                <h2 class="text-xl font-semibold mb-4 text-gray-700">Upload Image</h2>
+                <input type="file" id="imageUpload" accept="image/*" 
+                       class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 mb-4">
+                <button onclick="processImage()" 
+                        class="w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-lg shadow hover:bg-blue-700 transition duration-150">
+                    Detect Parking
+                </button>
+            </div>
+
+            <!-- Stats Section -->
+            <div class="bg-blue-50 p-4 rounded-lg border">
+                <h2 class="text-xl font-semibold mb-4 text-gray-700">Parking Statistics</h2>
+                <div id="parkingStats" class="space-y-2">
+                    <div class="flex justify-between">
+                        <span>Total Spots:</span>
+                        <span id="totalSpots">-</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Occupied:</span>
+                        <span id="occupiedSpots" class="text-red-600 font-bold">-</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Available:</span>
+                        <span id="availableSpots" class="text-green-600 font-bold">-</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Occupancy Rate:</span>
+                        <span id="occupancyRate" class="font-bold">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result Image -->
+        <div class="mt-8">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">Detection Result</h2>
+            <div id="resultContainer" class="bg-gray-100 rounded-lg p-4 text-center">
+                <p class="text-gray-500">No image processed yet</p>
+            </div>
+        </div>
+
+        <!-- Status -->
+        <div id="status" class="mt-4 p-3 rounded-md hidden"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8001';
+
+        async function processImage() {
+            const fileInput = document.getElementById('imageUpload');
+            const resultContainer = document.getElementById('resultContainer');
+            const statusDiv = document.getElementById('status');
+            
+            if (fileInput.files.length === 0) {
+                showStatus('Please select an image file first.', 'error');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                showStatus('Processing image...', 'info');
+                resultContainer.innerHTML = '<p class="text-blue-600">Processing...</p>';
+
+                const response = await fetch(`${API_BASE}/api/parking/detect`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Update stats
+                    document.getElementById('totalSpots').textContent = result.data.total;
+                    document.getElementById('occupiedSpots').textContent = result.data.occupied;
+                    document.getElementById('availableSpots').textContent = result.data.available;
+                    document.getElementById('occupancyRate').textContent = `${result.data.occupancy_rate}%`;
+                    
+                    // Display result image
+                    resultContainer.innerHTML = `
+                        <img src="${result.data.result_image}" 
+                             class="max-w-full h-auto rounded-lg shadow-md mx-auto" 
+                             alt="Parking Detection Result">
+                    `;
+                    
+                    showStatus('Image processed successfully!', 'success');
+                } else {
+                    throw new Error('Processing failed');
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                showStatus(`Error: ${error.message}`, 'error');
+                resultContainer.innerHTML = '<p class="text-red-500">Failed to process image</p>';
+            }
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `mt-4 p-3 rounded-md ${
+                type === 'success' ? 'bg-green-100 text-green-700' :
+                type === 'error' ? 'bg-red-100 text-red-700' :
+                'bg-blue-100 text-blue-700'
+            }`;
+            statusDiv.textContent = message;
+            statusDiv.classList.remove('hidden');
+            
+            if (type === 'success' || type === 'error') {
+                setTimeout(() => statusDiv.classList.add('hidden'), 3000);
+            }
+        }
+
+        // Check API status on load
+        window.onload = async function() {
+            try {
+                const response = await fetch(`${API_BASE}/api/parking/status`);
+                const status = await response.json();
+                console.log('API Status:', status);
+            } catch (error) {
+                console.error('API not available:', error);
+                showStatus('API server not available. Please start the server.', 'error');
+            }
+        };
+    </script>
+</body>
+</html>
