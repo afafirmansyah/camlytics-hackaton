@@ -1,0 +1,203 @@
+service: camlytics
+frameworkVersion: '3'
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-iam-roles-per-function
+  - serverless-esbuild
+  # - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: nodejs18.x 
+  region: eu-central-1
+  timeout: 30
+  memorySize: 256
+  stage: ${opt:stage, 'dev'}
+  environment:
+    REGION: ${self:provider.region}
+    USERS_TABLE: ${self:custom.usersTable}
+    DETECTIONS_TABLE: ${self:custom.detectionsTable}
+    S3_BUCKET: ${self:custom.s3Bucket}
+    JWT_SECRET: 'camlytics-jwt-secret-key-2024'
+
+custom:
+  usersTable: 'camlytics-users-${sls:stage}'
+  detectionsTable: 'camlytics-detections-${sls:stage}'
+  s3Bucket: 'camlytics-images-${sls:stage}'
+  # customDomain:
+  #   stage: ${self:provider.stage}
+  #   domainName: ${ssm:/${self:provider.stage}/backendapp/apigateway/domainname}
+  #   basePath: "v1/hackathon/camlytics"
+  #   createRoute53Record: false
+  #   endpointType: regional 
+  esbuild:
+    bundle: true
+    minify: false
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:custom.usersTable}
+
+    DetectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: UserIdIndex
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+            Projection:
+              ProjectionType: 'ALL'
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:custom.detectionsTable}
+
+    ImagesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3Bucket}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [GET, PUT, POST]
+              AllowedOrigins: ['*']
+
+functions:
+  register:
+    handler: src/register.handler
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-register
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: !GetAtt UsersTable.Arn
+    events:
+      - http:
+          method: POST
+          path: /auth/register
+          cors: true
+
+  login:
+    handler: src/login.handler
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-login
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource: !GetAtt UsersTable.Arn
+    events:
+      - http:
+          method: POST
+          path: /auth/login
+          cors: true
+
+  detectLicensePlate:
+    handler: src/detectLicensePlate.handler
+    timeout: 60
+    memorySize: 512
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-detect-license-plate
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - rekognition:DetectText
+          - rekognition:DetectCustomLabels
+          - textract:DetectDocumentText
+        Resource: '*'
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: 
+          - !Join ['', [!GetAtt ImagesBucket.Arn, '/*']]
+          - !GetAtt ImagesBucket.Arn
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:Scan
+        Resource: !GetAtt DetectionsTable.Arn
+    events:
+      - http:
+          method: POST
+          path: /detect/license-plate
+          cors: true
+          request:
+            maximumAge: 86400
+
+  getDetections:
+    handler: src/getDetections.handler
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-get-detections
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: 
+          - !GetAtt DetectionsTable.Arn
+          - !Sub '${DetectionsTable.Arn}/index/UserIdIndex'
+    events:
+      - http:
+          method: GET
+          path: /detections
+          cors: true
+
+  getImageUrl:
+    handler: src/getImageUrl.handler
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-get-image-url
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: !Join ['', [!GetAtt ImagesBucket.Arn, '/*']]
+    events:
+      - http:
+          method: GET
+          path: /image-url
+          cors: true
+
+  detectVehicleParking:
+    handler: src/detectVehicleParking.handler
+    timeout: 60
+    memorySize: 512
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-detect-vehicle-parking
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - rekognition:DetectCustomLabels
+        Resource: '*'
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: 
+          - !Join ['', [!GetAtt ImagesBucket.Arn, '/*']]
+          - !GetAtt ImagesBucket.Arn
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: !GetAtt DetectionsTable.Arn
+    events:
+      - http:
+          method: POST
+          path: /detect/vehicle-parking
+          cors: true
+          request:
+            maximumAge: 86400
